@@ -86,9 +86,9 @@ def _tick_fields(depth: int = ORDER_BOOK_DEPTH) -> list[str]:
     f = ["timestamp_utc", "unix_ts", "market_type", "market_slug", "condition_id",
          "interval_start_ts", "interval_end_ts", "seconds_remaining",
          "up_token_id", "down_token_id",
-         "up_best_bid", "up_best_ask", "up_midpoint", "up_spread", "up_last_trade",
+         "up_best_bid", "up_best_ask", "up_midpoint", "up_price", "up_spread", "up_last_trade",
          "up_total_bid", "up_total_ask", "up_imbalance", "up_bid_lvls", "up_ask_lvls",
-         "dn_best_bid", "dn_best_ask", "dn_midpoint", "dn_spread", "dn_last_trade",
+         "dn_best_bid", "dn_best_ask", "dn_midpoint", "dn_price", "dn_spread", "dn_last_trade",
          "dn_total_bid", "dn_total_ask", "dn_imbalance", "dn_bid_lvls", "dn_ask_lvls",
          "implied_up", "implied_dn", "price_sum"]
     for pfx in ("up", "dn"):
@@ -138,6 +138,10 @@ def _fetch_spread(tid: str) -> float | None:
 
 def _fetch_last(tid: str) -> float | None:
     v = _get(f"{CLOB_HOST}/last-trade-price?token_id={tid}").get("price")
+    return float(v) if v else None
+
+def _fetch_price(tid: str) -> float | None:
+    v = _get(f"{CLOB_HOST}/midpoint?token_id={tid}").get("mid")
     return float(v) if v else None
 
 def _fetch_event(slug: str) -> dict | None:
@@ -309,11 +313,15 @@ class MarketSession:
             "tick_outcome": None,   # set when last-second bid hits ≥ 0.99
         }
 
-        # Background REST cache for spread + last-trade
-        rest      = {"up_spread": "", "dn_spread": "", "up_last": "", "dn_last": ""}
+        # Background REST cache for price, spread, and last-trade
+        rest      = {"up_price": "", "dn_price": "",
+                     "up_spread": "", "dn_spread": "",
+                     "up_last": "", "dn_last": ""}
         rest_stop = threading.Event()
         def _refresh():
             while not rest_stop.is_set():
+                rest["up_price"]  = _fetch_price(up_tok)  or ""
+                rest["dn_price"]  = _fetch_price(dn_tok)  or ""
                 rest["up_spread"] = _fetch_spread(up_tok) or ""
                 rest["dn_spread"] = _fetch_spread(dn_tok) or ""
                 rest["up_last"]   = _fetch_last(up_tok)   or ""
@@ -363,11 +371,11 @@ class MarketSession:
                 "seconds_remaining": secs_left,
                 "up_token_id": up_tok, "down_token_id": dn_tok,
                 "up_best_bid": us["best_bid"], "up_best_ask": us["best_ask"],
-                "up_midpoint": up_mid or "", "up_spread": rest["up_spread"], "up_last_trade": rest["up_last"],
+                "up_midpoint": up_mid or "", "up_price": rest["up_price"], "up_spread": rest["up_spread"], "up_last_trade": rest["up_last"],
                 "up_total_bid": us["total_bid"], "up_total_ask": us["total_ask"],
                 "up_imbalance": us["imbalance"], "up_bid_lvls": us["bid_levels"], "up_ask_lvls": us["ask_levels"],
                 "dn_best_bid": ds["best_bid"], "dn_best_ask": ds["best_ask"],
-                "dn_midpoint": dn_mid or "", "dn_spread": rest["dn_spread"], "dn_last_trade": rest["dn_last"],
+                "dn_midpoint": dn_mid or "", "dn_price": rest["dn_price"], "dn_spread": rest["dn_spread"], "dn_last_trade": rest["dn_last"],
                 "dn_total_bid": ds["total_bid"], "dn_total_ask": ds["total_ask"],
                 "dn_imbalance": ds["imbalance"], "dn_bid_lvls": ds["bid_levels"], "dn_ask_lvls": ds["ask_levels"],
                 "implied_up": up_mid or "", "implied_dn": dn_mid or "", "price_sum": psum,
