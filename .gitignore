@@ -1,5 +1,8 @@
-# Collected market data (large, not tracked)
+# Collected market data (large CSV files, not tracked)
 data/
+
+# Virtual environment
+.venv/
 
 # Logs
 *.log

@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# collector.sh — tmux launcher for Polymarket data collector
+# collector.sh — self-contained launcher for the Polymarket data collector
+#
+# Everything lives inside this folder: venv, logs, and data.
 #
 # Usage:
-#   ./collector.sh start     Launch collector in tmux
+#   ./collector.sh start     Create venv (first time), then launch in tmux
 #   ./collector.sh stop      Kill the session
 #   ./collector.sh restart   Stop + start
 #   ./collector.sh attach    Re-attach to running session
 #   ./collector.sh status    Show running status + data stats
 #   ./collector.sh logs      Tail live log output
+#   ./collector.sh setup     Create venv + install deps (runs automatically on start)
 
 set -euo pipefail
 
 SESSION="data-collector"
-DIR="$(cd "$(dirname "$0")" && pwd)"   # pypt/collector/
-VENV="$DIR/../.venv"
+DIR="$(cd "$(dirname "$0")" && pwd)"   # always pypt/collector/
+VENV="$DIR/.venv"
 PYTHON="$VENV/bin/python"
+PIP="$VENV/bin/pip"
 COLLECTOR="$DIR/collect.py"
 DATA_DIR="$DIR/data"
+LOG="$DIR/collector.log"
 
 _green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
 _yellow() { printf '\033[0;33m%s\033[0m\n' "$*"; }
@@ -25,23 +30,69 @@ _bold()   { printf '\033[1m%s\033[0m\n' "$*"; }
 
 _running() { tmux has-session -t "$SESSION" 2>/dev/null; }
 
+# ── setup: create local venv + install deps ───────────────────────────────────
+cmd_setup() {
+    _bold "=== Collector setup ==="
+
+    # Find a suitable Python (3.9+ required for zoneinfo)
+    local py=""
+    for candidate in python3 python3.12 python3.11 python3.10 python3.9; do
+        if command -v "$candidate" &>/dev/null; then
+            local ver
+            ver=$("$candidate" -c "import sys; print(sys.version_info >= (3,9))" 2>/dev/null || echo "False")
+            if [[ "$ver" == "True" ]]; then
+                py=$(command -v "$candidate")
+                break
+            fi
+        fi
+    done
+
+    if [[ -z "$py" ]]; then
+        _red "Python 3.9+ not found. Install it with: brew install python3"
+        exit 1
+    fi
+    echo "  Using Python: $py ($("$py" --version))"
+
+    if [[ ! -d "$VENV" ]]; then
+        echo "  Creating venv at $VENV ..."
+        "$py" -m venv "$VENV"
+        _green "  Venv created."
+    else
+        _green "  Venv exists: $VENV"
+    fi
+
+    echo "  Installing dependencies..."
+    "$PIP" install --upgrade pip -q
+    "$PIP" install "requests>=2.31.0" "websockets>=12.0" -q
+    _green "  Dependencies installed."
+    echo ""
+    _green "Setup complete. Run: ./collector.sh start"
+}
+
+# ── start ─────────────────────────────────────────────────────────────────────
 cmd_start() {
     if _running; then
         _yellow "Collector already running. Use: ./collector.sh attach"
         exit 1
     fi
+
+    # Auto-setup if venv missing
     if [[ ! -f "$PYTHON" ]]; then
-        _red "Venv not found at $VENV. Run: ../bot.sh setup"
-        exit 1
+        _yellow "Venv not found — running setup first..."
+        echo ""
+        cmd_setup
+        echo ""
     fi
 
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$DIR"
     tmux send-keys -t "$SESSION" \
-        "source '$VENV/bin/activate' && python '$COLLECTOR' 2>&1 | tee '$DIR/collector.log'" \
+        "source '$VENV/bin/activate' && python '$COLLECTOR' 2>&1 | tee '$LOG'" \
         Enter
 
-    _green "Collector started. Run: ./collector.sh attach"
-    echo "  Data → $DATA_DIR"
+    _green "Collector started."
+    echo "  Attach : ./collector.sh attach"
+    echo "  Logs   : ./collector.sh logs"
+    echo "  Data   : $DATA_DIR"
 }
 
 cmd_stop() {
@@ -95,12 +146,10 @@ cmd_status() {
 }
 
 cmd_logs() {
-    local logfile="$DIR/collector.log"
-    if [[ -f "$logfile" ]]; then
-        tail -f "$logfile"
+    if [[ -f "$LOG" ]]; then
+        tail -f "$LOG"
     else
-        _yellow "No log file yet."
-        echo "Collector may not have been started yet."
+        _yellow "No log file yet. Start the collector first."
     fi
 }
 
@@ -114,20 +163,22 @@ case "$CMD" in
     attach)  cmd_attach  ;;
     status)  cmd_status  ;;
     logs)    cmd_logs    ;;
+    setup)   cmd_setup   ;;
     help|-h|--help)
         cat <<EOF
 Usage: ./collector.sh <command>
 
 Commands:
-  start    Launch Polymarket data collector in tmux
+  start    Create venv if needed, then launch collector in tmux
   stop     Kill the collector
   restart  Stop + start
   attach   Re-attach to running session
-  status   Show session state + data file stats
+  status   Show session state + per-market tick/outcome counts
   logs     Tail collector.log
+  setup    Create .venv + install deps (runs automatically on first start)
 
 Data layout:
-  data/{asset}/{interval}/orderbook_ticks.csv   (1 row/sec, WS book snapshot)
+  data/{asset}/{interval}/orderbook_ticks.csv   (1 row/sec WS book snapshot)
   data/{asset}/{interval}/market_outcomes.csv   (one row per closed market)
 
 Assets:    btc, eth, sol, xrp, bnb
