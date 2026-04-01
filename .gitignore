@@ -1,0 +1,10 @@
+# Collected market data (large, not tracked)
+data/
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
