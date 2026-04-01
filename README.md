@@ -10,7 +10,7 @@ Everything is self-contained in this folder — venv, logs, and data all live he
 ## Quick start
 
 ```bash
-cd collector
+cd pmcts
 ./collector.sh start
 ```
 
