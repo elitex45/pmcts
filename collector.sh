@@ -63,7 +63,7 @@ cmd_setup() {
 
     echo "  Installing dependencies..."
     "$PIP" install --upgrade pip -q
-    "$PIP" install "requests>=2.31.0" "websockets>=12.0" "pandas>=2.0.0" "pyarrow>=14.0.0" -q
+    "$PIP" install "requests>=2.31.0" "websockets>=12.0" -q
     _green "  Dependencies installed."
     echo ""
     _green "Setup complete. Run: ./collector.sh start"
@@ -86,7 +86,7 @@ cmd_start() {
 
     tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$DIR"
     tmux send-keys -t "$SESSION" \
-        "source '$VENV/bin/activate' && python '$COLLECTOR' ${EXTRA_ARGS[*]} 2>&1 | tee '$LOG'" \
+        "source '$VENV/bin/activate' && python '$COLLECTOR' 2>&1 | tee '$LOG'" \
         Enter
 
     _green "Collector started."
@@ -97,15 +97,7 @@ cmd_start() {
 
 cmd_stop() {
     if _running; then
-        _yellow "Sending stop signal — waiting for clean flush…"
-        tmux send-keys -t "$SESSION" C-c ""   # SIGINT → Python handler sets _stop_event
-        local deadline=$(( $(date +%s) + 30 ))
-        while _running && [[ $(date +%s) -lt $deadline ]]; do
-            sleep 1
-        done
-        if _running; then
-            tmux kill-session -t "$SESSION" 2>/dev/null || true  # force if needed
-        fi
+        tmux kill-session -t "$SESSION"
         _green "Stopped."
     else
         _yellow "Not running."
@@ -139,21 +131,16 @@ cmd_status() {
         return
     fi
 
-    printf "  %-6s  %-5s  %8s ticks   %6s outcomes  %s\n" "ASSET" "INTV" "TICKS" "OUTC" "FORMAT"
-    printf "  %s\n" "$(printf '─%.0s' {1..60})"
+    printf "  %-6s  %-5s  %8s ticks   %6s outcomes\n" "ASSET" "INTV" "TICKS" "OUTC"
+    printf "  %s\n" "$(printf '─%.0s' {1..50})"
     for asset in btc eth sol xrp bnb; do
         for iv in 5m 15m 1h 4h 1d; do
             d="$DATA_DIR/$asset/$iv"
             [[ -d "$d" ]] || continue
-            ticks=0; outcomes=0; fmt="csv"
+            ticks=0; outcomes=0
             [[ -f "$d/orderbook_ticks.csv"  ]] && ticks=$(( $(wc -l < "$d/orderbook_ticks.csv") - 1 ))
             [[ -f "$d/market_outcomes.csv"  ]] && outcomes=$(( $(wc -l < "$d/market_outcomes.csv") - 1 ))
-            if [[ -d "$d/ticks" ]]; then
-                pq_count=$(find "$d/ticks" -name "*.parquet" 2>/dev/null | wc -l | tr -d ' ')
-                ticks="$pq_count windows"; fmt="parquet"
-            fi
-            [[ -f "$d/market_outcomes.parquet" ]] && outcomes="(pq)" && fmt="parquet"
-            printf "  %-6s  %-5s  %8s         %6s  %s\n" "$asset" "$iv" "$ticks" "$outcomes" "$fmt"
+            printf "  %-6s  %-5s  %8d         %6d\n" "$asset" "$iv" "$ticks" "$outcomes"
         done
     done
 }
@@ -168,7 +155,6 @@ cmd_logs() {
 
 CMD="${1:-start}"
 shift 2>/dev/null || true
-EXTRA_ARGS=("$@")   # remaining args forwarded to collect.py (e.g. --format csv)
 
 case "$CMD" in
     start)   cmd_start   ;;
@@ -191,11 +177,7 @@ Commands:
   logs     Tail collector.log
   setup    Create .venv + install deps (runs automatically on first start)
 
-Data layout (parquet, default):
-  data/{asset}/{interval}/ticks/{ts}.parquet    (one file per window)
-  data/{asset}/{interval}/market_outcomes.parquet
-
-Data layout (csv, --format csv):
+Data layout:
   data/{asset}/{interval}/orderbook_ticks.csv   (1 row/sec WS book snapshot)
   data/{asset}/{interval}/market_outcomes.csv   (one row per closed market)
 
@@ -204,7 +186,6 @@ Intervals: 5m, 15m, 1h, 4h, 1d
 
 Run subset:
   python collect.py --assets btc eth --intervals 5m 15m
-  python collect.py --format csv
 EOF
         ;;
     *)
