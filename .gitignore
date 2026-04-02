@@ -1,6 +1,6 @@
 # Collected market data (large CSV files, not tracked)
 data/
-
+data_backup/
 # Virtual environment
 .venv/
 
