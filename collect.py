@@ -4,9 +4,9 @@ Polymarket multi-asset, multi-interval orderbook collector.
 One thread per (asset, interval) pair — each discovers the current Polymarket
 up/down market, streams WS tick data, then rotates to the next interval.
 
-Data layout:
-  data/{asset}/{interval}/orderbook_ticks.csv   — tick on every WS book change
-  data/{asset}/{interval}/market_outcomes.csv   — one row per closed market
+Data layout (daily-rotated files, keyed by UTC date):
+  data/{asset}/{interval}/orderbook_ticks_YYYY-MM-DD.csv
+  data/{asset}/{interval}/market_outcomes_YYYY-MM-DD.csv
 
 Slug formats:
   5m / 15m / 4h  →  {asset}-updown-{interval}-{ts}
@@ -282,12 +282,16 @@ class MarketSession:
         self.interval     = interval
         self.interval_sec = interval_sec
         self.market_type  = f"{asset}-{interval}"
-        d = os.path.join(DATA_DIR, asset, interval)
-        os.makedirs(d, exist_ok=True)
-        self.tick_csv    = os.path.join(d, "orderbook_ticks.csv")
-        self.outcome_csv = os.path.join(d, "market_outcomes.csv")
-        _ensure(self.tick_csv,    TICK_FIELDS)
-        _ensure(self.outcome_csv, OUTCOME_FIELDS)
+        self.dir = os.path.join(DATA_DIR, asset, interval)
+        os.makedirs(self.dir, exist_ok=True)
+
+    def _tick_csv(self, unix_ts: int) -> str:
+        date_str = datetime.fromtimestamp(unix_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        return os.path.join(self.dir, f"orderbook_ticks_{date_str}.csv")
+
+    def _outcome_csv(self, interval_start_ts: int) -> str:
+        date_str = datetime.fromtimestamp(interval_start_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        return os.path.join(self.dir, f"market_outcomes_{date_str}.csv")
 
     def _interval_ts(self, ts: float | None = None) -> int:
         return (int(ts or time.time()) // self.interval_sec) * self.interval_sec
@@ -386,7 +390,7 @@ class MarketSession:
                     row[f"{pfx}_bid_size_{i}"]  = snap.get(f"bid_size_{i}", "")
                     row[f"{pfx}_ask_price_{i}"] = snap.get(f"ask_price_{i}", "")
                     row[f"{pfx}_ask_size_{i}"]  = snap.get(f"ask_size_{i}", "")
-            _append(self.tick_csv, TICK_FIELDS, row)
+            _append(self._tick_csv(now_sec), TICK_FIELDS, row)
 
         feed = WSFeed(up_book, dn_book, on_tick)
         try:
@@ -429,7 +433,7 @@ class MarketSession:
             elif up_c is not None and dn_c is not None:
                 outcome = "UP" if up_c >= dn_c else "DOWN"
 
-        _append(self.outcome_csv, OUTCOME_FIELDS, {
+        _append(self._outcome_csv(interval_ts), OUTCOME_FIELDS, {
             "market_type": self.market_type, "market_slug": slug, "condition_id": cid,
             "interval_start_ts": interval_ts, "interval_end_ts": end_ts,
             "interval_start_utc": datetime.fromtimestamp(interval_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),

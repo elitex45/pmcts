@@ -3,7 +3,9 @@ Collect Chainlink BTC/USD price every second via Polymarket RTDS WebSocket.
 
 Connects to wss://ws-live-data.polymarket.com, subscribes to the
 crypto_prices_chainlink topic, filters for btc/usd, and writes each
-price tick to a CSV file (1 row per second).
+price tick to a daily CSV file (1 row per second).
+
+Output: data/btc_chainlink_price_YYYY-MM-DD.csv (UTC date)
 
 Run:  python collect_btc_price.py
 """
@@ -19,7 +21,6 @@ from websockets.sync.client import connect
 
 WS_URL = "wss://ws-live-data.polymarket.com"
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-CSV_PATH = os.path.join(DATA_DIR, "btc_chainlink_price.csv")
 PING_INTERVAL = 5  # seconds
 
 CSV_FIELDS = [
@@ -38,17 +39,20 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def ensure_csv():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if not os.path.exists(CSV_PATH):
-        with open(CSV_PATH, "w", newline="") as f:
-            csv.DictWriter(f, fieldnames=CSV_FIELDS).writeheader()
-        log.info("Created %s", CSV_PATH)
+def csv_path_for_ts(ts_sec: float) -> str:
+    """Return the daily CSV path for the given unix timestamp (UTC date)."""
+    date_str = datetime.fromtimestamp(ts_sec, tz=timezone.utc).strftime("%Y-%m-%d")
+    return os.path.join(DATA_DIR, f"btc_chainlink_price_{date_str}.csv")
 
 
-def append_row(row: dict):
-    with open(CSV_PATH, "a", newline="") as f:
-        csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore").writerow(row)
+def append_row(path: str, row: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    new_file = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        if new_file:
+            w.writeheader()
+        w.writerow(row)
 
 
 def subscribe_msg():
@@ -64,9 +68,9 @@ def subscribe_msg():
 
 
 def run():
-    ensure_csv()
+    os.makedirs(DATA_DIR, exist_ok=True)
     log.info("Starting Chainlink BTC/USD price collector")
-    log.info("Writing to %s", CSV_PATH)
+    log.info("Writing daily CSVs under %s", DATA_DIR)
 
     while True:
         try:
@@ -124,7 +128,7 @@ def run():
                         "btc_price_full": full_price,
                         "source": "chainlink",
                     }
-                    append_row(row)
+                    append_row(csv_path_for_ts(ts_sec), row)
                     log.info("BTC $%.2f  @ %s", price, ts_utc)
 
         except KeyboardInterrupt:
